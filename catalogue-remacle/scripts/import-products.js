@@ -6,12 +6,20 @@
  * Usage :
  *   node scripts/import-products.js <fichier-source.json>
  *
- * Le fichier source doit contenir un tableau JSON d'objets avec :
- *   art_no, description, frac_camion, bfa_pct, prix_net_2026,
- *   weight_kg, dimensions (optionnel), volume (optionnel), etc.
+ * Format source attendu :
+ *   art_no           - numéro article (string numérique) OU en-tête de section (texte)
+ *   description      - description du produit
+ *   dimension        - dimensions en string (ex: "30x30", "223")
+ *   height_cm        - hauteur en cm (string)
+ *   weight_kg        - poids en kg (string ou number)
+ *   per_pallet       - quantité par palette
+ *   frac_camion      - fraction camion (number ou null)
+ *   bfa_pct          - taux BFA (0.1525, 0.06, 0.03, 0)
+ *   prix_net_2026    - prix net € (number ou null → prix sur demande)
+ *   zones            - objet avec tarifs par zone (optionnel)
  *
- * Les lignes dont prix_net_2026 est null sont traitées comme
- * des en-têtes de section et servent à déterminer la catégorie.
+ * Les lignes avec art_no non-numérique sont des en-têtes de section.
+ * Les produits avec art_no numérique et prix_net_2026=null conservent prixNet: null.
  */
 
 import { readFileSync, writeFileSync } from 'fs';
@@ -21,16 +29,37 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ─── Category mapping ────────────────────────────────────────────────────────
-// Maps section header keywords to app categories
+// Maps section header keywords to app categories (first match wins)
 const SECTION_CATEGORY_MAP = [
   // Eau & stockage
-  { keywords: ['CITERNE', 'EAU DE PLUIE', 'SYSTEME', 'FOSSE', 'SEPARATEUR', 'GRAISSAGE', 'STOCKAGE EAU'], category: 'eau' },
+  {
+    keywords: [
+      'CITERNE', 'EAU DE PLUIE', 'TEMPO+', 'FILTRE', 'ANNEAU', 'PUITS',
+      'INFILTRATION', 'BASSIN', 'CAVE', 'FOSSE', 'GRAISSAGE', 'DEBOURBEUR',
+      'SEPTIQUE', 'SANICLAIR', 'DEGRAISSEUR', 'SEPARATEUR', 'EPURATION', 'CAUTION',
+    ],
+    category: 'eau',
+  },
   // Regards & drainage
-  { keywords: ['REGARD', 'BUSE', 'CHAMBRE', 'TUYAU', 'DRAIN', 'AVALOIR', 'CANIVEAU', 'GRILLE', 'TAMPON', 'CUNETTE', 'PUISARD'], category: 'regards' },
+  {
+    keywords: ['CHAMBRE', 'REGARD', 'BUSE', 'TUYAU', 'DRAIN', 'AVALOIR', 'GRILLE', 'CADRE', 'CUNETTE', 'PUISARD', 'TAMPON'],
+    category: 'regards',
+  },
+  // Jardin & aménagement
+  {
+    keywords: ['TRADIVIN', 'DALLE GAZON', 'JARDIN', 'TERRASSE', 'MOBILIER', 'BANC', 'JARDINIERE', 'PAVE', 'GAZON'],
+    category: 'jardin',
+  },
   // Construction
-  { keywords: ['LINTEAU', 'HOURDIS', 'PLANCHER', 'POUTR', 'ENTREVOUS', 'APPUI', 'SEUIL', 'BLOC', 'AGGLO', 'PARPAING', 'MUR', 'FONDATION', 'CHAINAGE', 'PREFAB'], category: 'construction' },
-  // Jardin
-  { keywords: ['DALLE', 'GAZON', 'BORDURE', 'PAVE', 'JARDIN', 'TERRASSE', 'MOBILIER', 'BANC', 'JARDINIERE'], category: 'jardin' },
+  {
+    keywords: [
+      'LINTEAU', 'HOURDIS', 'PLANCHER', 'POUTR', 'ENTREVOUS', 'APPUI', 'SEUIL',
+      'BLOC', 'AGGLO', 'PARPAING', 'MUR', 'FONDATION', 'CHAINAGE', 'PREFAB',
+      'ASSELET', 'DISTANCEUR', 'COUVRE', 'ASPIRATEUR', 'FUMEE', 'MARCHE',
+      'ESCALIER', 'BORDURE', 'ELEMENT', 'CLOTURE', 'DALLE', 'L ELEMENT',
+    ],
+    category: 'construction',
+  },
 ];
 
 function detectCategory(sectionHeader) {
@@ -40,34 +69,44 @@ function detectCategory(sectionHeader) {
       return category;
     }
   }
-  // Default: construction
-  return 'construction';
+  return null; // null = keep current category (sub-header)
 }
 
 function bfaPctToCategory(bfaPct) {
   if (bfaPct == null) return 'drainage';
   const rate = typeof bfaPct === 'string' ? parseFloat(bfaPct) : bfaPct;
+  if (rate === 0) return 'caution';
   if (Math.abs(rate - 0.1525) < 0.005 || Math.abs(rate - 0.153) < 0.005) return 'drainage';
   if (Math.abs(rate - 0.06) < 0.005) return 'sec';
   if (Math.abs(rate - 0.03) < 0.005) return 'gazon';
-  if (rate === 0) return 'caution';
   return 'drainage';
 }
 
-function parseDescription(desc) {
-  if (!desc) return { name: '', description: '' };
-  // Use first meaningful part as name, full as description
-  return { name: desc.trim(), description: desc.trim() };
-}
-
-function parseDimensions(raw) {
-  if (!raw || typeof raw !== 'object') return null;
+function parseDimension(dimStr, heightCm) {
+  if (!dimStr && !heightCm) return null;
   const dims = {};
-  if (raw.diametre || raw.diameter) dims.diametre = raw.diametre || raw.diameter;
-  if (raw.longueur || raw.length) dims.longueur = raw.longueur || raw.length;
-  if (raw.largeur || raw.width) dims.largeur = raw.largeur || raw.width;
-  if (raw.hauteur || raw.height) dims.hauteur = raw.hauteur || raw.height;
-  if (raw.epaisseur || raw.thickness) dims.epaisseur = raw.epaisseur || raw.thickness;
+  if (dimStr) {
+    const str = String(dimStr).trim();
+    // Formats: "LxlxH", "Lxl", "diameter" (single number)
+    const parts = str.split(/[xX×]/);
+    if (parts.length >= 3) {
+      const [l, la, h] = parts.map(p => parseFloat(p));
+      if (!isNaN(l)) dims.longueur = l;
+      if (!isNaN(la)) dims.largeur = la;
+      if (!isNaN(h)) dims.hauteur = h;
+    } else if (parts.length === 2) {
+      const [l, la] = parts.map(p => parseFloat(p));
+      if (!isNaN(l)) dims.longueur = l;
+      if (!isNaN(la)) dims.largeur = la;
+    } else {
+      const d = parseFloat(str);
+      if (!isNaN(d)) dims.diametre = d;
+    }
+  }
+  if (heightCm) {
+    const h = parseFloat(String(heightCm));
+    if (!isNaN(h) && !dims.hauteur) dims.hauteur = h;
+  }
   return Object.keys(dims).length > 0 ? dims : null;
 }
 
@@ -75,18 +114,6 @@ function run() {
   const args = process.argv.slice(2);
   if (args.length === 0) {
     console.error('Usage: node scripts/import-products.js <source.json>');
-    console.error('');
-    console.error('Le fichier source.json doit contenir un tableau JSON.');
-    console.error('Chaque objet doit avoir au minimum :');
-    console.error('  art_no        - numéro article (string)');
-    console.error('  description   - description du produit');
-    console.error('  prix_net_2026 - prix net € (number ou null pour en-têtes)');
-    console.error('  frac_camion   - fraction camion (number ou null)');
-    console.error('  bfa_pct       - taux BFA (0.1525, 0.06, 0.03, 0)');
-    console.error('  weight_kg     - poids en kg (number)');
-    console.error('');
-    console.error('Les lignes avec prix_net_2026 = null sont des en-têtes de section');
-    console.error('et servent à déterminer la catégorie des produits qui suivent.');
     process.exit(1);
   }
 
@@ -100,7 +127,8 @@ function run() {
 
   console.log(`Lecture de ${raw.length} entrées...`);
 
-  let currentCategory = 'eau';
+  // Initial category: first products are CHAMBRE DE VISITE (regards)
+  let currentCategory = 'regards';
   let currentSubcategory = '';
   const products = [];
   const ids = new Set();
@@ -112,13 +140,16 @@ function run() {
     const description = String(item.description ?? '').trim();
     const prixNet = item.prix_net_2026;
 
-    // Section header detection: no art_no or no prix_net
-    if (!artNo || prixNet == null || prixNet === '' || prixNet === 0) {
-      if (description) {
-        currentCategory = detectCategory(description);
-        currentSubcategory = description;
+    // Section header: art_no is non-numeric text
+    if (!/^\d+$/.test(artNo)) {
+      if (artNo) {
+        const detectedCategory = detectCategory(artNo);
+        if (detectedCategory !== null) {
+          currentCategory = detectedCategory;
+        }
+        currentSubcategory = artNo;
         sectionCount++;
-        console.log(`  Section: "${description}" → catégorie: ${currentCategory}`);
+        console.log(`  Section: "${artNo}" → catégorie: ${currentCategory}`);
       }
       continue;
     }
@@ -132,17 +163,23 @@ function run() {
     }
     ids.add(id);
 
-    const { name } = parseDescription(description);
-    const dims = parseDimensions(item.dimensions);
+    const dims = parseDimension(item.dimension, item.height_cm);
     const fracCamion = item.frac_camion != null ? Number(item.frac_camion) : null;
     const bfaCat = bfaPctToCategory(item.bfa_pct);
     const poids = item.weight_kg != null ? Number(item.weight_kg) : null;
     const volume = item.volume != null ? Number(item.volume) : null;
     const unite = item.unite || 'pièce';
+    const name = description || artNo;
+
+    // Override category for DALLE GAZON products regardless of section
+    let categoryId = currentCategory;
+    if (description.toUpperCase().includes('DALLE GAZON')) {
+      categoryId = 'jardin';
+    }
 
     products.push({
       id,
-      categoryId: currentCategory,
+      categoryId,
       subcategory: currentSubcategory,
       name,
       reference: artNo,
@@ -152,8 +189,9 @@ function run() {
       volume,
       unite,
       bfaCategory: bfaCat,
-      prixNet: Number(prixNet),
+      prixNet: prixNet != null && prixNet !== '' ? Number(prixNet) : null,
       fractionCamion: fracCamion,
+      perPallet: item.per_pallet != null ? Number(item.per_pallet) : null,
       normes: [],
       caracteristiques: [],
       ficheTechnique: false,
