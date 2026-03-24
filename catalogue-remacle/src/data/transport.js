@@ -41,10 +41,23 @@ export const GRUE_LOURDE_TARIFFS = {
 export const BFA_DRAINAGE = 0.1525;
 /** BFA gamme sèche */
 export const BFA_SEC = 0.06;
+/** BFA dalles gazon */
+export const BFA_GAZON = 0.03;
+/** Pas de BFA (cautions, etc.) */
+export const BFA_ZERO = 0;
 
 export const BFA_RATES = {
   drainage: BFA_DRAINAGE,
   sec: BFA_SEC,
+  gazon: BFA_GAZON,
+  caution: BFA_ZERO,
+};
+
+export const BFA_LABELS = {
+  drainage: '15,25%',
+  sec: '6%',
+  gazon: '3%',
+  caution: '0%',
 };
 
 // ─── Helpers de calcul ─────────────────────────────────────────────────────

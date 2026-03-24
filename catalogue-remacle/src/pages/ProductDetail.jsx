@@ -11,6 +11,7 @@ import {
   calcPrixBFA,
   calcTransportAvecBFA,
   BFA_RATES,
+  BFA_LABELS,
   ZONES,
   GRUE_ZONES,
   ZONE_LABELS,
@@ -173,7 +174,7 @@ export default function ProductDetail({ id }) {
               <p className="text-xs text-gray-500 mb-4">
                 Prix net fournisseur : <strong className="font-mono">{fmt(product.prixNet)} €</strong>
                 {' '}— Fraction camion : <strong className="font-mono">{(product.fractionCamion * 100).toFixed(1)} %</strong>
-                {' '}— BFA {product.bfaCategory === 'drainage' ? '15,25%' : '6%'} (diviseur {fmt(diviseur, 4)})
+                {' '}— BFA {BFA_LABELS[product.bfaCategory] ?? '15,25%'} (diviseur {fmt(diviseur, 4)})
               </p>
 
               <div className="overflow-x-auto">
@@ -240,11 +241,12 @@ export default function ProductDetail({ id }) {
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-bold text-remacle-navy text-sm">Prix {zone}</h3>
                 <span className={`text-xs px-2 py-0.5 rounded font-medium ${
-                  product.bfaCategory === 'drainage'
-                    ? 'bg-blue-50 text-blue-600'
+                  product.bfaCategory === 'drainage' ? 'bg-blue-50 text-blue-600'
+                    : product.bfaCategory === 'gazon' ? 'bg-green-50 text-green-600'
+                    : product.bfaCategory === 'caution' ? 'bg-gray-50 text-gray-600'
                     : 'bg-orange-50 text-orange-600'
                 }`}>
-                  BFA {product.bfaCategory === 'drainage' ? '15,25%' : '6%'}
+                  BFA {BFA_LABELS[product.bfaCategory] ?? '15,25%'}
                 </span>
               </div>
 

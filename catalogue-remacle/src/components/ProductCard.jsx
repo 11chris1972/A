@@ -6,6 +6,7 @@ import {
   calcTransportParArticle,
   calcPrixBFA,
   BFA_RATES,
+  BFA_LABELS,
 } from '../data/transport';
 
 export default function ProductCard({ product, category }) {
@@ -104,11 +105,12 @@ export default function ProductCard({ product, category }) {
                   </div>
                 </div>
                 <span className={`text-xs px-2 py-0.5 rounded font-medium ${
-                  product.bfaCategory === 'drainage'
-                    ? 'bg-blue-50 text-blue-600'
+                  product.bfaCategory === 'drainage' ? 'bg-blue-50 text-blue-600'
+                    : product.bfaCategory === 'gazon' ? 'bg-green-50 text-green-600'
+                    : product.bfaCategory === 'caution' ? 'bg-gray-50 text-gray-600'
                     : 'bg-orange-50 text-orange-600'
                 }`}>
-                  BFA {product.bfaCategory === 'drainage' ? '15,25%' : '6%'}
+                  BFA {BFA_LABELS[product.bfaCategory] ?? '15,25%'}
                 </span>
               </div>
             )}

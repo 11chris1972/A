@@ -9,7 +9,7 @@ export default function Header() {
 
   const navLinks = [
     { href: '/catalogue', label: 'Catalogue' },
-    { href: '/calculateur', label: 'Calc. camion' },
+    { href: '/calculateur', label: 'Calc. offre' },
   ];
 
   function handleTruckTypeChange(e) {
